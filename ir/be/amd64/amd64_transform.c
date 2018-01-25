@@ -2566,28 +2566,38 @@ static ir_node *gen_Conv(ir_node *const node)
 		/* int to float */
 		assert(!src_float && dst_float);
 
-		if (src_bits < 32) {
-			/* Conversion is from signed Dword only, therefore extend to 32-bit
-			 * register size, potentially with sign.
-			 * This is done with an explicit move instruction. */
-
-			size = X86_SIZE_32;
-			x86_insn_size_t move_mode = x86_size_from_mode(src_mode);
-
-			if (mode_is_signed(src_mode)) {
+		// Conversion is from signed Dword/Qword only.
+		// uint32_t have to be zero-extended into a int64_t,
+		// while signed ints with less than 32 bit have to be
+		// sign-extended.
+		// This is done with an explicit mov/movs instruction.
+		x86_insn_size_t move_mode = x86_size_from_mode(src_mode);
+		if (mode_is_signed(src_mode)) {
+			if (src_bits < 32) {
+				// Let's just assume there is no integer type of width
+				// between 32 and 64 bits. So we only extend to 32 bits.
+				size = X86_SIZE_32;
 				ir_node *const ext = new_bd_amd64_movs(dbgi, block, n_in, in,
 														 reg_reqs, move_mode,
 														 AMD64_OP_REG, addr);
 				in[0] = be_new_Proj(ext, pn_amd64_movs_res);
-			} else {
-				ir_node *const ext = new_bd_amd64_mov_gp(dbgi, block, n_in, in,
+			} else if (src_bits != 32 && src_bits != 64) {
+				panic("conversion of signed %d bit integer to "
+						"floating point not implemented", src_bits);
+			}
+		} else {
+			assert(!mode_is_signed(src_mode));
+
+			if (src_bits >= 64) {
+				panic("cannot convert unsigned %d-bit to floating point",
+						src_bits);
+			}
+
+			size = src_bits >= 32 ? X86_SIZE_64 : X86_SIZE_32;
+			ir_node *const ext = new_bd_amd64_mov_gp(dbgi, block, n_in, in,
 														 reg_reqs, move_mode,
 														 AMD64_OP_REG, addr);
-				in[0] = be_new_Proj(ext, pn_amd64_mov_gp_res);
-			}
-		} else if (src_bits > 32) {
-			panic("cannot convert integer with width greater than 32 bit to "
-					"floating point");
+			in[0] = be_new_Proj(ext, pn_amd64_mov_gp_res);
 		}
 
 		if (dst_bits == 32) {
